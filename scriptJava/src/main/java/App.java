@@ -1,26 +1,76 @@
+
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
-
-import org.knowm.xchart.CategoryChart;
-import org.knowm.xchart.CategoryChartBuilder;
-import org.knowm.xchart.SwingWrapper;
-import org.knowm.xchart.internal.chartpart.Chart;
-
-import DTO.PacoteMarketing;
-import controller.GerenciadorDados;
-
 import org.knowm.xchart.*;
+import org.knowm.xchart.internal.chartpart.Chart;
+import DTO.PacoteMarketing;
+import DTO.ResultadoOtimizacaoDTO;
+import controller.GerenciadorDados;
+import controller.OtimizadorMixVendas;
 
 public class App {
 
     public static void main(String[] args) {
-        // 1. Carrega os dados agrupados
+        // 1. Carrega os dados reais do CSV
         String caminho = java.nio.file.Paths.get("dados.csv").toAbsolutePath().toString();
-        Map<PacoteMarketing, Integer> dados = GerenciadorDados.lerEAgruparCSV(caminho);
+        Map<PacoteMarketing, Integer> dadosReais = GerenciadorDados.lerEAgruparCSV(caminho);
 
+        if (dadosReais.isEmpty()) {
+            System.err.println("Nenhum dado carregado.");
+            return;
+        }
+
+        // 2. Executa a Otimização
+        ResultadoOtimizacaoDTO resultado = OtimizadorMixVendas.otimizar(dadosReais, 600.0, 500.0);
+
+        // 3. Prepara as listas para os Gráficos Comparativos
+        int totalItens = dadosReais.size();
+        List<String> nomesPacotes = new ArrayList<>(totalItens);
+        
+        // CORREÇÃO AQUI: Mudando para Double para normalizar a assinatura do XChart
+        List<Double> qtdReais = new ArrayList<>(totalItens);
+        List<Double> qtdOtimizadas = new ArrayList<>(totalItens);
+        
+        List<Double> lucroRealTotal = new ArrayList<>(totalItens);
+        List<Double> lucroOtimizadoTotal = new ArrayList<>(totalItens);
+
+        dadosReais.forEach((pacote, qtdReal) -> {
+            nomesPacotes.add(pacote.nome());
+            qtdReais.add((double) qtdReal); // Cast para double
+            lucroRealTotal.add(pacote.margemUnitaria() * qtdReal);
+
+            int qtdOtimizada = resultado.mixOtimizado().getOrDefault(pacote, qtdReal);
+            qtdOtimizadas.add((double) qtdOtimizada); // Cast para double
+            lucroOtimizadoTotal.add(pacote.margemUnitaria() * qtdOtimizada);
+        });
+
+        // ----------------------------------------------------------------
+        // 4. MONTAGEM DOS GRÁFICOS (XChart)
+        // ----------------------------------------------------------------
+        CategoryChart graficoQtd = new CategoryChartBuilder()
+                .width(600).height(400).title("Volume de Vendas: Real vs Otimizado").build();
+        graficoQtd.addSeries("Atual (Real)", nomesPacotes, qtdReais);
+        graficoQtd.addSeries("Sugerido (ojAlgo)", nomesPacotes, qtdOtimizadas);
+
+        CategoryChart graficoLucro = new CategoryChartBuilder()
+                .width(600).height(400).title("Lucro Total: Real vs Otimizado").build();
+        graficoLucro.addSeries("Lucro Real", nomesPacotes, lucroRealTotal);
+        graficoLucro.addSeries("Lucro Otimizado", nomesPacotes, lucroOtimizadoTotal);
+
+        System.out.println("Otimização concluída com sucesso? " + resultado.sucesso());
+        System.out.println("Lucro Máximo Estimado: R$ " + resultado.lucroMaximoTotal());
+
+        // Exibe a matriz de gráficos na tela
+        List<Chart<?, ?>> matriz = List.of(graficoQtd, graficoLucro);
+        new SwingWrapper<>(matriz).displayChartMatrix();
+
+///////////////////////////////////////////////////////////grafico comun ///////////////////////////////////////
+        // 1. Carrega os dados agrupados
+        Map<PacoteMarketing, Integer> dados = GerenciadorDados.lerEAgruparCSV(caminho);
+        
         // Listas para armazenar os dados processados
-        List<String> nomesPacotes = new ArrayList<>();
+        List<String> nomesPacotesCSV = new ArrayList<>();
         List<Double> margensUnitarias = new ArrayList<>();
         List<Double> totalHoras = new ArrayList<>();
         List<Double> lucroMaximoPotencial = new ArrayList<>();
@@ -28,7 +78,7 @@ public class App {
 
         // Processa o mapa de dados
         dados.forEach((pacote, qtd) -> {
-            nomesPacotes.add(pacote.nome());
+            nomesPacotesCSV.add(pacote.nome());
             quantidades.add(qtd);
 
             // Gráfico 1: Margem unitária direto do pacote
@@ -52,7 +102,7 @@ public class App {
                 .width(600).height(400)
                 .title("Quantidade de Pacotes Vendidos / Demandados")
                 .xAxisTitle("Pacote").yAxisTitle("Quantidade").build();
-        graficoOriginal.addSeries("Demanda Real", nomesPacotes, quantidades);
+        graficoOriginal.addSeries("Demanda Real", nomesPacotesCSV, quantidades);
 
         // ----------------------------------------------------------------
         // SUGERIDO 1: Margem de Lucro por Pacote (CategoryChart)
@@ -61,7 +111,7 @@ public class App {
                 .width(600).height(400)
                 .title("Gráfico 1: Margem de Lucro Unitária por Pacote")
                 .xAxisTitle("Pacote").yAxisTitle("Margem (R$)").build();
-        graficoMargem.addSeries("Margem Unitária", nomesPacotes, margensUnitarias);
+        graficoMargem.addSeries("Margem Unitária", nomesPacotesCSV, margensUnitarias);
 
         // ----------------------------------------------------------------
         // SUGERIDO 2: Margem Unitária vs. Custo de Tempo (XYChart - Dispersão)
@@ -77,10 +127,10 @@ public class App {
 
         // Adiciona cada pacote como uma série individual para plotar os pontos
         // correspondentes
-        for (int i = 0; i < nomesPacotes.size(); i++) {
+        for (int i = 0; i < nomesPacotesCSV.size(); i++) {
             List<Double> xData = List.of(totalHoras.get(i));
             List<Double> yData = List.of(margensUnitarias.get(i));
-            graficoDispersao.addSeries(nomesPacotes.get(i), xData, yData);
+            graficoDispersao.addSeries(nomesPacotesCSV.get(i), xData, yData);
         }
 
         // ----------------------------------------------------------------
@@ -93,8 +143,8 @@ public class App {
         // Transforma o estilo em gráfico de Rosca (Donut) para ficar mais moderno
         graficoPizza.getStyler().setCircular(true);
 
-        for (int i = 0; i < nomesPacotes.size(); i++) {
-            graficoPizza.addSeries(nomesPacotes.get(i), lucroMaximoPotencial.get(i));
+        for (int i = 0; i < nomesPacotesCSV.size(); i++) {
+            graficoPizza.addSeries(nomesPacotesCSV.get(i), lucroMaximoPotencial.get(i));
         }
 
         // ----------------------------------------------------------------
